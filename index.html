@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Performance 3D Christmas Tree</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #020205;
+            font-family: 'Times New Roman', serif;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 10;
+        }
+
+        h1 {
+            margin-top: 30px;
+            color: #d4af37; /* 土豪金 */
+            font-size: 4rem;
+            letter-spacing: 8px;
+            text-shadow: 0 0 20px rgba(212, 175, 55, 0.6);
+            font-weight: lighter;
+            opacity: 0.9;
+        }
+
+        #controls-hint {
+            margin-top: 10px;
+            color: #666;
+            font-family: sans-serif;
+            font-size: 0.9rem;
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+            pointer-events: auto; /* 允许点击提示框 */
+            cursor: pointer;
+        }
+    </style>
+    <!-- 引入 Three.js 和 Tween.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@tweenjs/tween.js": "https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <h1>MERRY CHRISTMAS</h1>
+        <div id="controls-hint">Click to Interact & Play Music | Drag to Rotate</div>
+    </div>
+
+    <!-- 圣诞背景音乐 (替换为免版权音乐链接) -->
+    <audio id="bgm" loop>
+        <source src="https://upload.wikimedia.org/wikipedia/commons/6/6d/Jingle_Bells_-_Kevin_MacLeod_-_No_Copyright_Music.mp3" type="audio/mpeg">
+    </audio>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import TWEEN from '@tweenjs/tween.js';
+
+        // --- 配置参数 ---
+        const CONFIG = {
+            particleCount: 2500, // 几何体总数
+            treeHeight: 40,
+            treeRadius: 18,
+            colors: {
+                gold: new THREE.Color(0xffd700),
+                red: new THREE.Color(0xc41e3a),
+                green: new THREE.Color(0x004d00),
+                darkGold: new THREE.Color(0xb8860b)
+            }
+        };
+
+        // --- 1. 场景初始化 ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x020205, 0.0015);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 25, 80);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.8;
+        controls.maxDistance = 200;
+
+        // --- 2. 灯光系统 (金色光芒) ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const mainSpot = new THREE.SpotLight(0xffd700, 1500);
+        mainSpot.position.set(30, 60, 30);
+        mainSpot.angle = Math.PI / 5;
+        mainSpot.penumbra = 0.3;
+        mainSpot.castShadow = true;
+        mainSpot.shadow.bias = -0.0001;
+        scene.add(mainSpot);
+
+        // 底部暖光，照亮树底
+        const bottomLight = new THREE.PointLight(0xff4500, 300, 60);
+        bottomLight.position.set(0, -10, 0);
+        scene.add(bottomLight);
+
+        // --- 3. InstancedMesh 初始化 ---
+        // 我们使用两个 InstancedMesh：一个用于球体，一个用于立方体
+        // 这样可以保持高性能，同时拥有两种形状
+        
+        const sphereGeo = new THREE.SphereGeometry(0.5, 12, 12);
+        const boxGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+
+        // PBR 材质：高金属度，低粗糙度
+        const sharedMaterial = new THREE.MeshStandardMaterial({
+            color: 0xffffff, // 颜色将通过 instanceColor 设置
+            metalness: 0.8,
+            roughness: 0.15,
+            envMapIntensity: 1.0
+        });
+
+        const sphereCount = Math.floor(CONFIG.particleCount * 0.6); // 60% 球体
+        const boxCount = CONFIG.particleCount - sphereCount; // 40% 立方体
+
+        const sphereMesh = new THREE.InstancedMesh(sphereGeo, sharedMaterial, sphereCount);
+        const boxMesh = new THREE.InstancedMesh(boxGeo, sharedMaterial, boxCount);
+        
+        sphereMesh.castShadow = true;
+        sphereMesh.receiveShadow = true;
+        boxMesh.castShadow = true;
+        boxMesh.receiveShadow = true;
+
+        scene.add(sphereMesh);
+        scene.add(boxMesh);
+
+        // 树顶装饰 (单独的 Mesh)
+        const topGeo = new THREE.OctahedronGeometry(2.5, 0);
+        const topMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffff00, 
+            emissive: 0xffaa00,
+            emissiveIntensity: 0.5,
+            metalness: 1.0, 
+            roughness: 0.0 
+        });
+        const topStar = new THREE.Mesh(topGeo, topMat);
+        topStar.position.set(0, CONFIG.treeHeight + 1, 0);
+        scene.add(topStar);
+
+        // --- 4. 数据管理与位置计算 ---
+        
+        // 用于存储每个实例的实时数据，用于 TWEEN 动画
+        // 结构: { mesh: InstancedMesh, index: number, position: Vector3, rotation: Euler, scale: Vector3, ...targets }
+        const particles = []; 
+        const dummy = new THREE.Object3D(); // 辅助对象，用于计算矩阵
+
+        // 初始化颜色和数组
+        const initParticles = (mesh, count, type) => {
+            for (let i = 0; i < count; i++) {
+                const color = new THREE.Color();
+                
+                // 颜色分配逻辑
+                if (type === 'sphere') {
+                    // 球体：主要是金色和红色
+                    Math.random() > 0.4 ? color.copy(CONFIG.colors.gold) : color.copy(CONFIG.colors.red);
+                } else {
+                    // 立方体：金色和绿色
+                    Math.random() > 0.5 ? color.copy(CONFIG.colors.gold) : color.copy(CONFIG.colors.green);
+                }
+                
+                // 随机微调颜色亮度，增加层次感
+                color.offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+                mesh.setColorAt(i, color);
+
+                particles.push({
+                    mesh: mesh,
+                    index: i,
+                    // 当前状态
+                    x: 0, y: 0, z: 0,
+                    rx: Math.random() * Math.PI, ry: Math.random() * Math.PI, rz: Math.random() * Math.PI,
+                    s: 1, // scale
+                    // 目标状态缓存
+                    treePos: { x: 0, y: 0, z: 0 },
+                    explodePos: { x: 0, y: 0, z: 0 },
+                    textPos: { x: 0, y: 0, z: 0 }
+                });
+            }
+        };
+
+        initParticles(sphereMesh, sphereCount, 'sphere');
+        initParticles(boxMesh, boxCount, 'box');
+
+        // 4.1 计算圣诞树形态位置
+        particles.forEach((p, i) => {
+            const progress = i / CONFIG.particleCount; // 0 to 1
+            const y = progress * CONFIG.treeHeight;
+            const r = (1 - progress) * CONFIG.treeRadius;
+            
+            // 黄金角螺旋分布
+            const angle = i * 2.4; 
+            
+            p.treePos.x = Math.cos(angle) * r + (Math.random()-0.5);
+            p.treePos.y = y - CONFIG.treeHeight/2 + 5;
+            p.treePos.z = Math.sin(angle) * r + (Math.random()-0.5);
+
+            // 初始位置设为树
+            p.x = p.treePos.x;
+            p.y = p.treePos.y;
+            p.z = p.treePos.z;
+        });
+
+        // 4.2 计算爆炸形态位置
+        particles.forEach(p => {
+            const r = 30 + Math.random() * 30;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos((Math.random() * 2) - 1);
+            
+            p.explodePos.x = r * Math.sin(phi) * Math.cos(theta);
+            p.explodePos.y = r * Math.sin(phi) * Math.sin(theta);
+            p.explodePos.z = r * Math.cos(phi);
+        });
+
+        // 4.3 计算文字形态位置
+        const loader = new FontLoader();
+        loader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', (font) => {
+            const textGeo = new TextGeometry('MERRY\nCHRISTMAS', {
+                font: font,
+                size: 5,
+                height: 2,
+                curveSegments: 3
+            });
+            textGeo.center();
+            
+            // 采样文字表面点
+            // TextGeometry 本身不包含均匀分布的点，我们需要基于三角形面积采样或者简单地使用顶点
+            // 这里为了简单和性能，我们直接获取顶点，如果顶点不够就随机复用
+            textGeo.computeBoundingBox();
+            
+            // 创建一个临时的 Mesh 来辅助采样（更高级的做法是 Raycasting 采样，这里用顶点+随机插值模拟）
+            const posAttr = textGeo.attributes.position;
+            const count = posAttr.count;
+
+            particles.forEach((p, i) => {
+                // 随机取一个三角形的三个顶点进行插值，获得表面随机点
+                const idx = Math.floor(Math.random() * (count / 3)) * 3;
+                const v1 = new THREE.Vector3().fromBufferAttribute(posAttr, idx);
+                const v2 = new THREE.Vector3().fromBufferAttribute(posAttr, idx + 1);
+                const v3 = new THREE.Vector3().fromBufferAttribute(posAttr, idx + 2);
+
+                // 随机重心坐标
+                const r1 = Math.random();
+                const r2 = Math.random();
+                const sqrtR1 = Math.sqrt(r1);
+                
+                const px = (1 - sqrtR1) * v1.x + (sqrtR1 * (1 - r2)) * v2.x + (sqrtR1 * r2) * v3.x;
+                const py = (1 - sqrtR1) * v1.y + (sqrtR1 * (1 - r2)) * v2.y + (sqrtR1 * r2) * v3.y;
+                const pz = (1 - sqrtR1) * v1.z + (sqrtR1 * (1 - r2)) * v2.z + (sqrtR1 * r2) * v3.z;
+
+                p.textPos.x = px;
+                p.textPos.y = py;
+                p.textPos.z = pz;
+            });
+        });
+
+        // --- 5. 动画核心 ---
+        // 我们不直接 tween InstancedMesh，而是 tween `particles` 数组中的数据
+        // 然后在 render 循环中批量更新 InstancedMesh
+        function transitionTo(shapeName, duration = 1500) {
+            TWEEN.removeAll();
+
+            particles.forEach(p => {
+                let target;
+                let targetScale = 1;
+
+                if (shapeName === 'tree') target = p.treePos;
+                else if (shapeName === 'explode') target = p.explodePos;
+                else if (shapeName === 'text') {
+                    target = p.textPos;
+                    // 文字模式下，稍微缩小一点几何体，让字迹更清晰
+                    targetScale = 0.6;
+                }
+
+                // 位置动画
+                new TWEEN.Tween(p)
+                    .to({ 
+                        x: target.x, 
+                        y: target.y, 
+                        z: target.z,
+                        s: targetScale
+                    }, duration + Math.random() * 500)
+                    .easing(TWEEN.Easing.Exponential.InOut)
+                    .start();
+
+                // 旋转动画 (让它们飞的时候转起来)
+                new TWEEN.Tween(p)
+                    .to({
+                        rx: Math.random() * Math.PI * 4,
+                        ry: Math.random() * Math.PI * 4
+                    }, duration)
+                    .start();
+            });
+        }
+
+        // --- 6. 交互逻辑 ---
+        let currentState = 0; // 0: Tree, 1: Explode, 2: Text
+        let isDragging = false;
+        let mouseDownTime = 0;
+        let startPos = { x: 0, y: 0 };
+        let musicPlaying = false;
+
+        window.addEventListener('mousedown', (e) => {
+            isDragging = false;
+            mouseDownTime = Date.now();
+            startPos = { x: e.clientX, y: e.clientY };
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (Math.abs(e.clientX - startPos.x) > 5 || Math.abs(e.clientY - startPos.y) > 5) {
+                isDragging = true;
+            }
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            const clickDuration = Date.now() - mouseDownTime;
+            
+            // 只有短按且未拖拽才算点击
+            if (!isDragging && clickDuration < 300) {
+                handleInteraction();
+            }
+        });
+
+        function handleInteraction() {
+            // 播放音乐 (浏览器通常需要用户交互后才能播放音频)
+            if (!musicPlaying) {
+                const audio = document.getElementById('bgm');
+                audio.volume = 0.5;
+                audio.play().then(() => {
+                    musicPlaying = true;
+                    document.getElementById('controls-hint').innerText = "Drag to Rotate | Click to Transform";
+                }).catch(e => console.log("Audio play failed (waiting for interaction):", e));
+            }
+
+            // 状态切换
+            if (currentState === 0) {
+                transitionTo('explode');
+                controls.autoRotate = false; // 爆炸时停止自转
+                currentState = 1;
+            } else if (currentState === 1) {
+                transitionTo('text');
+                currentState = 2;
+            } else {
+                transitionTo('tree');
+                controls.autoRotate = true; // 恢复自转
+                currentState = 0;
+            }
+        }
+
+        // --- 7. 渲染循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            TWEEN.update();
+            controls.update();
+
+            // 树顶星星自转
+            if (currentState === 0) {
+                topStar.rotation.y += 0.015;
+                topStar.position.y = CONFIG.treeHeight/2 + 10 + Math.sin(Date.now() * 0.002) * 0.5; // 微微浮动
+            }
+
+            // 核心：更新 InstancedMesh 矩阵
+            // 这是一个计算密集型操作，但比操作 2000 个 Mesh 快得多
+            let sphereIdx = 0;
+            let boxIdx = 0;
+
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                
+                // 设置 dummy 的位置、旋转、缩放
+                dummy.position.set(p.x, p.y, p.z);
+                dummy.rotation.set(p.rx, p.ry, p.rz);
+                dummy.scale.set(p.s, p.s, p.s);
+                dummy.updateMatrix();
+
+                // 将矩阵应用到对应的 InstancedMesh
+                if (p.mesh === sphereMesh) {
+                    sphereMesh.setMatrixAt(p.index, dummy.matrix);
+                } else {
+                    boxMesh.setMatrixAt(p.index, dummy.matrix);
+                }
+            }
+
+            // 标记矩阵需要更新
+            sphereMesh.instanceMatrix.needsUpdate = true;
+            boxMesh.instanceMatrix.needsUpdate = true;
+
+            renderer.render(scene, camera);
+        }
+
+        // 窗口自适应
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>
